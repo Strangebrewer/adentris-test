@@ -33,6 +33,7 @@ export class EventsService {
   async accept(dto: CreateEventDto): Promise<AcceptedEvent> {
     const ts = this.parseTs(dto.ts);
     const id = idempotencyKey({ patientId: dto.patientId, type: dto.type, ts, data: dto.data });
+    const now = new Date();
 
     await this.rawEvents.insertIfAbsent({
       _id: id,
@@ -40,8 +41,10 @@ export class EventsService {
       type: dto.type,
       ts,
       data: dto.data,
-      receivedAt: new Date(),
+      receivedAt: now,
       status: 'pending',
+      claimableAt: now,
+      claimToken: null,
     });
     return { id };
   }
