@@ -15,6 +15,21 @@ type Claim = Pick<ClaimedEvent, '_id' | 'claimToken'>;
 
 const FAILED_BY_PATIENT_INDEX = 'failed_by_patient';
 
+export interface QueueStats {
+  /** Events not yet `done` or `failed`. */
+  depth: number;
+  /** How long the event that's been claimable longest has been waiting. Null if none are. */
+  oldestClaimableAgeMs: number | null;
+  /** Events some worker is working on right now. */
+  inFlight: number;
+  /**
+   * Processed but not yet committed: mostly events waiting on an earlier event for their
+   * patient, plus commits waiting to be retried after an error.
+   */
+  awaitingCommit: number;
+  failed: number;
+}
+
 @Injectable()
 export class RawEventRepository implements OnModuleInit {
   private readonly collection: Collection<RawEvent>;
@@ -142,6 +157,33 @@ export class RawEventRepository implements OnModuleInit {
       attempts,
       lastError: error,
     });
+  }
+
+  /** The queue's numbers for `GET /health`. They cover every worker, since they come from Mongo. */
+  async getQueueStats(): Promise<QueueStats> {
+    const now = new Date();
+    const [depth, oldest, inFlight, awaitingCommit, failed] = await Promise.all([
+      this.collection.countDocuments({ claimableAt: { $ne: null } }),
+      this.collection.findOne(
+        { claimableAt: { $lte: now } },
+        { sort: { claimableAt: 1 }, projection: { claimableAt: 1 } },
+      ),
+      this.collection.countDocuments({ claimableAt: { $gt: now }, status: 'processing' }),
+      this.collection.countDocuments({
+        claimableAt: { $ne: null },
+        processingResult: { $ne: null },
+      }),
+      this.collection.countDocuments({ status: 'failed' }, { hint: FAILED_BY_PATIENT_INDEX }),
+    ]);
+    return {
+      depth,
+      oldestClaimableAgeMs: oldest?.claimableAt
+        ? now.getTime() - oldest.claimableAt.getTime()
+        : null,
+      inFlight,
+      awaitingCommit,
+      failed,
+    };
   }
 
   /** The patient's earliest `failed` event, which everything after it is waiting on. */

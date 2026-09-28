@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { setTimeout } from 'node:timers/promises';
 import { Collection, Db } from 'mongodb';
 import { APP_CONFIG } from '../../src/config/app-config';
 import { EventsModule } from '../../src/events/events.module';
@@ -17,6 +16,7 @@ import {
 } from '../../src/raw-events/raw-event.model';
 import { WorkerAppModule } from '../../src/worker-app.module';
 import { testConfig } from '../support/test-db';
+import { waitFor } from '../support/wait-for';
 
 const heartRate = (second: number) => ({
   patientId: 'p1',
@@ -58,13 +58,11 @@ describe('Worker', () => {
     await moduleRef?.close();
   });
 
-  async function waitUntilAllDone(): Promise<void> {
-    const deadline = Date.now() + 5_000;
-    while ((await rawEvents.countDocuments({ status: { $ne: 'done' } })) > 0) {
-      if (Date.now() > deadline) throw new Error('Events were not all done within 5s');
-      await setTimeout(20);
-    }
-  }
+  const waitUntilAllDone = () =>
+    waitFor(
+      async () => (await rawEvents.countDocuments({ status: { $ne: 'done' } })) === 0,
+      'every event to be done',
+    );
 
   /** The state the stored events should fold to, taken in `(ts, _id)` order. */
   async function expectedState() {

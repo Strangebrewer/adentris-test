@@ -17,6 +17,9 @@ export interface AppConfig {
     maxAttempts: number;
     retryBackoffBaseMs: number;
   };
+  worker: {
+    shutdownTimeoutMs: number;
+  };
   processing: {
     simulatedCallMs: number;
     callTimeoutMs: number;
@@ -66,6 +69,9 @@ export function loadConfig(env: Env): AppConfig {
       blockedRetryDelayMs: int('QUEUE_BLOCKED_RETRY_DELAY_MS', 250, 1),
       maxAttempts: int('QUEUE_MAX_ATTEMPTS', 5, 1),
       retryBackoffBaseMs: int('QUEUE_RETRY_BACKOFF_BASE_MS', 1_000, 1),
+    },
+    worker: {
+      shutdownTimeoutMs: int('WORKER_SHUTDOWN_TIMEOUT_MS', 8_000, 0),
     },
     processing: {
       simulatedCallMs: int('PROCESSING_SIMULATED_CALL_MS', 5_000, 0),
