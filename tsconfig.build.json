@@ -4,7 +4,8 @@
     "noEmit": false,
     "rootDir": "./src",
     "outDir": "./dist",
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["node"]
   },
   "include": ["src"],
   "exclude": ["**/*.spec.ts"]

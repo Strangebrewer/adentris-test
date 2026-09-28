@@ -4,31 +4,38 @@
   "private": true,
   "description": "Patient event ingestion service — async processing, ordering, idempotency, crash-safe queue on MongoDB",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.9"
   },
   "scripts": {
     "prebuild": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc",
-    "start:api": "node --enable-source-maps dist/main.js",
-    "start:worker": "node --enable-source-maps dist/worker.main.js",
-    "lint": "eslint \"src/**/*.ts\"",
-    "format": "prettier --write \"src/**/*.ts\""
+    "start:api": "node --env-file-if-exists=.env --enable-source-maps dist/main.js",
+    "start:worker": "node --env-file-if-exists=.env --enable-source-maps dist/worker.main.js",
+    "lint": "eslint \"{src,test}/**/*.ts\"",
+    "format": "prettier --write \"{src,test}/**/*.ts\"",
+    "test": "jest",
+    "test:integration": "jest --selectProjects integration"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.6",
     "@nestjs/core": "^11.2.6",
     "@nestjs/platform-express": "^11.2.6",
+    "mongodb": "~7.5.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@nestjs/testing": "^11.2.6",
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.20.4",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
+    "jest": "^30.5.2",
     "prettier": "^3.9.9",
+    "ts-jest": "^29.4.14",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.70.1"
   }
