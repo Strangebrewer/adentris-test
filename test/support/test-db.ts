@@ -1,3 +1,4 @@
+import { Db } from 'mongodb';
 import { AppConfig, loadConfig } from '../../src/config/app-config';
 
 /**
@@ -12,4 +13,14 @@ export function testConfig(overrides: Record<string, string> = {}): AppConfig {
     MONGO_DB_NAME: `adentris_test_${process.env.JEST_WORKER_ID ?? '0'}`,
     ...overrides,
   });
+}
+
+/**
+ * Empties every collection but keeps the indexes. Use it in `beforeEach`.
+ * Also drop the whole database once in `beforeAll`,
+ * so indexes left over from an older run are removed.
+ */
+export async function clearCollections(db: Db): Promise<void> {
+  const collections = await db.collections();
+  await Promise.all(collections.map((collection) => collection.deleteMany({})));
 }

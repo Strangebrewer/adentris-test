@@ -6,6 +6,9 @@ export interface AppConfig {
     uri: string;
     dbName: string;
   };
+  ingest: {
+    maxFutureSkewMs: number;
+  };
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -37,6 +40,9 @@ export function loadConfig(env: Env): AppConfig {
     mongo: {
       uri: str('MONGO_URI', 'mongodb://localhost:27017'),
       dbName: str('MONGO_DB_NAME', 'adentris'),
+    },
+    ingest: {
+      maxFutureSkewMs: int('INGEST_MAX_FUTURE_SKEW_MS', 300_000, 0),
     },
   };
 
