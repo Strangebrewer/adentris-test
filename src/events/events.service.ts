@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { APP_CONFIG, AppConfig } from '../config/app-config';
-import { RawEventStatus } from '../raw-events/raw-event.model';
+import { ProcessingResult, RawEventStatus } from '../raw-events/raw-event.model';
 import { RawEventRepository } from '../raw-events/raw-event.repository';
 import { CreateEventDto } from './create-event.dto';
 import { idempotencyKey } from './idempotency-key';
@@ -16,6 +16,8 @@ export interface EventStatusView {
   ts: Date;
   receivedAt: Date;
   status: RawEventStatus;
+  /** The external call's result, once the event has been processed. */
+  result: ProcessingResult | null;
 }
 
 @Injectable()
@@ -45,6 +47,7 @@ export class EventsService {
       status: 'pending',
       claimableAt: now,
       claimToken: null,
+      processingResult: null,
     });
     return { id };
   }
@@ -53,8 +56,8 @@ export class EventsService {
     const event = await this.rawEvents.findById(id);
     if (!event) throw new NotFoundException(`No event with id ${id}`);
 
-    const { _id, patientId, type, ts, receivedAt, status } = event;
-    return { id: _id, patientId, type, ts, receivedAt, status };
+    const { _id, patientId, type, ts, receivedAt, status, processingResult } = event;
+    return { id: _id, patientId, type, ts, receivedAt, status, result: processingResult };
   }
 
   private parseTs(raw: string): Date {

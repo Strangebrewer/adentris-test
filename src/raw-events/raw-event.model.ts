@@ -2,6 +2,9 @@ export const RAW_EVENTS_COLLECTION = 'rawEvents';
 
 export type RawEventStatus = 'pending' | 'processing' | 'done' | 'failed';
 
+/** What the external call returns for an event. */
+export type ProcessingResult = Record<string, unknown>;
+
 /**
  * One accepted event. This collection is the source of truth,
  * so an event's content never changes after it's stored.
@@ -26,7 +29,15 @@ export interface RawEvent {
    * the token is unchanged, so a worker whose claim was taken over can't write anything.
    */
   claimToken: string | null;
+  /**
+   * The external call's result, cached so the slow call runs once per event.
+   * Recomputing a patient's state reuses it instead of calling again.
+   */
+  processingResult: ProcessingResult | null;
 }
 
 /** An event as returned by a claim, which always carries the claiming worker's token. */
 export type ClaimedEvent = RawEvent & { claimToken: string };
+
+/** A claimed event whose external call has finished and whose result is cached. */
+export type ProcessedEvent = ClaimedEvent & { processingResult: ProcessingResult };

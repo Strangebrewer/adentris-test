@@ -9,6 +9,16 @@ export interface AppConfig {
   ingest: {
     maxFutureSkewMs: number;
   };
+  queue: {
+    concurrency: number;
+    leaseMs: number;
+    idlePollMs: number;
+    blockedRetryDelayMs: number;
+  };
+  processing: {
+    simulatedCallMs: number;
+    callTimeoutMs: number;
+  };
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -44,7 +54,23 @@ export function loadConfig(env: Env): AppConfig {
     ingest: {
       maxFutureSkewMs: int('INGEST_MAX_FUTURE_SKEW_MS', 300_000, 0),
     },
+    queue: {
+      concurrency: int('QUEUE_CONCURRENCY', 25, 1),
+      leaseMs: int('QUEUE_LEASE_MS', 15_000, 1),
+      idlePollMs: int('QUEUE_IDLE_POLL_MS', 500, 1),
+      blockedRetryDelayMs: int('QUEUE_BLOCKED_RETRY_DELAY_MS', 250, 1),
+    },
+    processing: {
+      simulatedCallMs: int('PROCESSING_SIMULATED_CALL_MS', 5_000, 0),
+      callTimeoutMs: int('PROCESSING_CALL_TIMEOUT_MS', 10_000, 1),
+    },
   };
+
+  // The call has to time out while the worker still holds the claim.
+  // Otherwise another worker takes the event over before the timeout can fire.
+  if (config.processing.callTimeoutMs >= config.queue.leaseMs) {
+    errors.push('PROCESSING_CALL_TIMEOUT_MS must be less than QUEUE_LEASE_MS');
+  }
 
   if (errors.length > 0) {
     throw new Error(`Invalid configuration:\n  - ${errors.join('\n  - ')}`);

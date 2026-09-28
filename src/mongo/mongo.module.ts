@@ -5,6 +5,9 @@ import { APP_CONFIG, AppConfig } from '../config/app-config';
 export const MONGO_CLIENT = Symbol('MONGO_CLIENT');
 export const MONGO_DB = Symbol('MONGO_DB');
 
+/** The error code Mongo uses when an insert hits an existing `_id` or unique key. */
+export const DUPLICATE_KEY = 11000;
+
 @Global()
 @Module({
   providers: [

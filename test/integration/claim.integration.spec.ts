@@ -3,34 +3,13 @@ import { Collection, Db } from 'mongodb';
 import { APP_CONFIG } from '../../src/config/app-config';
 import { AppConfigModule } from '../../src/config/app-config.module';
 import { MONGO_DB, MongoModule } from '../../src/mongo/mongo.module';
-import {
-  RAW_EVENTS_COLLECTION,
-  RawEvent,
-  RawEventStatus,
-} from '../../src/raw-events/raw-event.model';
+import { RAW_EVENTS_COLLECTION, RawEvent } from '../../src/raw-events/raw-event.model';
 import { RawEventRepository } from '../../src/raw-events/raw-event.repository';
 import { RawEventsModule } from '../../src/raw-events/raw-events.module';
+import { rawEvent } from '../support/raw-event';
 import { clearCollections, testConfig } from '../support/test-db';
 
 const LEASE_MS = 15_000;
-
-function rawEvent(
-  id: string,
-  claimableAt: Date | null,
-  status: RawEventStatus = 'pending',
-): RawEvent {
-  return {
-    _id: id,
-    patientId: 'p1',
-    type: 'blood-pressure',
-    ts: new Date('2026-01-01T00:00:00Z'),
-    data: {},
-    receivedAt: new Date(),
-    status,
-    claimableAt,
-    claimToken: null,
-  };
-}
 
 describe('RawEventRepository.claimNext', () => {
   let moduleRef: TestingModule;
@@ -61,11 +40,11 @@ describe('RawEventRepository.claimNext', () => {
   });
 
   it('gives each claimable event to exactly one of many concurrent claimers', async () => {
-    const claimable = Array.from({ length: 20 }, (_, i) => rawEvent(`claimable-${i}`, new Date()));
+    const claimable = Array.from({ length: 20 }, (_, i) => rawEvent({ _id: `claimable-${i}` }));
     await rawEvents.insertMany([
       ...claimable,
-      rawEvent('done', null, 'done'),
-      rawEvent('not-yet', new Date(Date.now() + 60_000)),
+      rawEvent({ _id: 'done', status: 'done', claimableAt: null }),
+      rawEvent({ _id: 'not-yet', claimableAt: new Date(Date.now() + 60_000) }),
     ]);
 
     const claims = await Promise.all(
@@ -77,7 +56,7 @@ describe('RawEventRepository.claimNext', () => {
   });
 
   it('does not give a claimed event out again until its lease runs out', async () => {
-    await rawEvents.insertOne(rawEvent('e1', new Date()));
+    await rawEvents.insertOne(rawEvent({ _id: 'e1' }));
 
     const first = await repository.claimNext(LEASE_MS);
     expect(first?._id).toBe('e1');

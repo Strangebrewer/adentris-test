@@ -1,10 +1,16 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Collection, Db, MongoServerError } from 'mongodb';
-import { MONGO_DB } from '../mongo/mongo.module';
-import { ClaimedEvent, RAW_EVENTS_COLLECTION, RawEvent } from './raw-event.model';
+import { DUPLICATE_KEY, MONGO_DB } from '../mongo/mongo.module';
+import {
+  ClaimedEvent,
+  ProcessedEvent,
+  ProcessingResult,
+  RAW_EVENTS_COLLECTION,
+  RawEvent,
+} from './raw-event.model';
 
-const DUPLICATE_KEY = 11000;
+type Claim = Pick<ClaimedEvent, '_id' | 'claimToken'>;
 
 @Injectable()
 export class RawEventRepository implements OnModuleInit {
@@ -17,6 +23,8 @@ export class RawEventRepository implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     // The claim query filters and sorts on `claimableAt` only, so this index serves it completely.
     await this.collection.createIndex({ claimableAt: 1 });
+    // Serves the per-patient queries at commit time, which filter and sort by `(ts, _id)`.
+    await this.collection.createIndex({ patientId: 1, ts: 1, _id: 1 });
   }
 
   /**
@@ -54,5 +62,72 @@ export class RawEventRepository implements OnModuleInit {
       { sort: { claimableAt: 1 }, returnDocument: 'after' },
     );
     return claimed as ClaimedEvent | null;
+  }
+
+  /** Caches the external call's result. Returns false if the claim was taken over. */
+  cacheResult(claim: Claim, result: ProcessingResult): Promise<boolean> {
+    return this.updateIfStillClaimed(claim, { processingResult: result });
+  }
+
+  /**
+   * Hands the event back to the queue, to be claimed again from `claimableAt`.
+   * Returns false if the claim was taken over.
+   */
+  release(claim: Claim, claimableAt: Date): Promise<boolean> {
+    return this.updateIfStillClaimed(claim, { status: 'pending', claimableAt, claimToken: null });
+  }
+
+  /** Returns false if the claim was taken over. */
+  markDone(claim: Claim): Promise<boolean> {
+    return this.updateIfStillClaimed(claim, {
+      status: 'done',
+      claimableAt: null,
+      claimToken: null,
+    });
+  }
+
+  /**
+   * Whether the patient has an earlier event that isn't `done` yet.
+   * Earlier means by `(ts, _id)`, the order events are folded in.
+   */
+  async hasUnfinishedBefore({ _id, patientId, ts }: RawEvent): Promise<boolean> {
+    const earlier = await this.collection.findOne(
+      {
+        patientId,
+        status: { $ne: 'done' },
+        $or: [{ ts: { $lt: ts } }, { ts, _id: { $lt: _id } }],
+      },
+      { projection: { _id: 1 } },
+    );
+    return earlier !== null;
+  }
+
+  /**
+   * The patient's events up to and including `ts` that have a cached result,
+   * in the order they're folded in. That includes events that aren't `done` yet.
+   */
+  findProcessedUpTo(
+    patientId: string,
+    ts: Date,
+  ): Promise<Pick<ProcessedEvent, '_id' | 'processingResult'>[]> {
+    return this.collection
+      .find(
+        { patientId, ts: { $lte: ts }, processingResult: { $ne: null } },
+        { projection: { _id: 1, processingResult: 1 } },
+      )
+      .sort({ ts: 1, _id: 1 })
+      .toArray() as Promise<Pick<ProcessedEvent, '_id' | 'processingResult'>[]>;
+  }
+
+  /**
+   * Every write after the claim goes through here. It only matches while the worker's
+   * token is still on the event, so a worker whose claim was taken over writes nothing.
+   */
+  private async updateIfStillClaimed(
+    { _id, claimToken }: Claim,
+    fields: Partial<RawEvent>,
+  ): Promise<boolean> {
+    const { matchedCount } = await this.collection.updateOne({ _id, claimToken }, { $set: fields });
+    return matchedCount === 1;
   }
 }
