@@ -19,6 +19,9 @@ export interface AppConfig {
     simulatedCallMs: number;
     callTimeoutMs: number;
   };
+  snapshot: {
+    intervalEvents: number;
+  };
 }
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -63,6 +66,9 @@ export function loadConfig(env: Env): AppConfig {
     processing: {
       simulatedCallMs: int('PROCESSING_SIMULATED_CALL_MS', 5_000, 0),
       callTimeoutMs: int('PROCESSING_CALL_TIMEOUT_MS', 10_000, 1),
+    },
+    snapshot: {
+      intervalEvents: int('SNAPSHOT_INTERVAL_EVENTS', 20, 1),
     },
   };
 

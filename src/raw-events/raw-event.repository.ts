@@ -103,16 +103,19 @@ export class RawEventRepository implements OnModuleInit {
   }
 
   /**
-   * The patient's events up to and including `ts` that have a cached result,
-   * in the order they're folded in. That includes events that aren't `done` yet.
+   * The patient's events after `after` (or from the start, if it's null) up to and including
+   * `upTo` that have a cached result, in the order they're folded in.
+   * That includes events that aren't `done` yet.
    */
-  findProcessedUpTo(
+  findProcessedBetween(
     patientId: string,
-    ts: Date,
+    after: Date | null,
+    upTo: Date,
   ): Promise<Pick<ProcessedEvent, '_id' | 'processingResult'>[]> {
+    const ts = after ? { $gt: after, $lte: upTo } : { $lte: upTo };
     return this.collection
       .find(
-        { patientId, ts: { $lte: ts }, processingResult: { $ne: null } },
+        { patientId, ts, processingResult: { $ne: null } },
         { projection: { _id: 1, processingResult: 1 } },
       )
       .sort({ ts: 1, _id: 1 })

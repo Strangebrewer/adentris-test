@@ -40,6 +40,7 @@ describe('Worker', () => {
           PROCESSING_SIMULATED_CALL_MS: '50',
           QUEUE_IDLE_POLL_MS: '10',
           QUEUE_BLOCKED_RETRY_DELAY_MS: '10',
+          SNAPSHOT_INTERVAL_EVENTS: '2',
         }),
       )
       .compile();

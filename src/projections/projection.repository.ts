@@ -1,8 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Collection, Db, MongoServerError } from 'mongodb';
 import { DUPLICATE_KEY, MONGO_DB } from '../mongo/mongo.module';
-import { PatientState } from './fold';
-import { PATIENT_PROJECTIONS_COLLECTION, PatientProjection } from './patient-projection.model';
+import {
+  PATIENT_PROJECTIONS_COLLECTION,
+  PatientProjection,
+  ProjectionFields,
+} from './patient-projection.model';
 
 @Injectable()
 export class ProjectionRepository {
@@ -24,12 +27,11 @@ export class ProjectionRepository {
   async writeIfUnchanged(
     patientId: string,
     expectedVersion: number | null,
-    state: PatientState,
-    watermarkTs: Date,
+    fields: ProjectionFields,
   ): Promise<boolean> {
     if (expectedVersion === null) {
       try {
-        await this.collection.insertOne({ _id: patientId, state, watermarkTs, version: 1 });
+        await this.collection.insertOne({ _id: patientId, ...fields, version: 1 });
         return true;
       } catch (err) {
         if (err instanceof MongoServerError && err.code === DUPLICATE_KEY) return false;
@@ -39,7 +41,7 @@ export class ProjectionRepository {
 
     const { matchedCount } = await this.collection.updateOne(
       { _id: patientId, version: expectedVersion },
-      { $set: { state, watermarkTs }, $inc: { version: 1 } },
+      { $set: fields, $inc: { version: 1 } },
     );
     return matchedCount === 1;
   }

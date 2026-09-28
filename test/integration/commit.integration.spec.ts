@@ -9,6 +9,7 @@ import { foldAll } from '../../src/projections/fold';
 import {
   PATIENT_PROJECTIONS_COLLECTION,
   PatientProjection,
+  ProjectionFields,
 } from '../../src/projections/patient-projection.model';
 import { ProjectionRepository } from '../../src/projections/projection.repository';
 import {
@@ -48,7 +49,8 @@ describe('CommitService', () => {
       imports: [AppConfigModule, MongoModule, ProcessingModule],
     })
       .overrideProvider(APP_CONFIG)
-      .useValue(testConfig())
+      // A snapshot after every forward commit, so these tests also run through the snapshots.
+      .useValue(testConfig({ SNAPSHOT_INTERVAL_EVENTS: '1' }))
       .compile();
 
     db = moduleRef.get<Db>(MONGO_DB);
@@ -153,21 +155,29 @@ describe('CommitService', () => {
     });
   });
 
+  /** Projection fields for a state holding `events`, the last of which sets the watermark. */
+  const fields = (...events: ProcessedEvent[]): ProjectionFields => ({
+    state: foldAll(events),
+    watermarkTs: events[events.length - 1].ts,
+    snapshotGen: 0,
+    forwardSinceSnapshot: 0,
+  });
+
   it('rejects creating a projection that another write has already created', async () => {
     const [a, b] = [await processed('a'), await processed('b')];
 
-    expect(await projectionRepository.writeIfUnchanged('p1', null, foldAll([a]), a.ts)).toBe(true);
-    expect(await projectionRepository.writeIfUnchanged('p1', null, foldAll([b]), b.ts)).toBe(false);
+    expect(await projectionRepository.writeIfUnchanged('p1', null, fields(a))).toBe(true);
+    expect(await projectionRepository.writeIfUnchanged('p1', null, fields(b))).toBe(false);
 
     expect(await projections.findOne({ _id: 'p1' })).toMatchObject({ state: foldAll([a]) });
   });
 
   it('rejects a projection write based on an outdated version', async () => {
     const [a, b, d] = [await processed('a'), await processed('b'), await processed('d')];
-    await projectionRepository.writeIfUnchanged('p1', null, foldAll([a]), a.ts);
-    await projectionRepository.writeIfUnchanged('p1', 1, foldAll([a, b]), b.ts);
+    await projectionRepository.writeIfUnchanged('p1', null, fields(a));
+    await projectionRepository.writeIfUnchanged('p1', 1, fields(a, b));
 
-    expect(await projectionRepository.writeIfUnchanged('p1', 1, foldAll([a, d]), d.ts)).toBe(false);
+    expect(await projectionRepository.writeIfUnchanged('p1', 1, fields(a, d))).toBe(false);
 
     expect(await projections.findOne({ _id: 'p1' })).toMatchObject({
       state: foldAll([a, b]),

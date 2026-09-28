@@ -32,7 +32,7 @@ export function foldEvent(state: PatientState, event: FoldableEvent): PatientSta
   };
 }
 
-/** Folds events that are already sorted by `(ts, _id)`. */
-export function foldAll(events: FoldableEvent[]): PatientState {
-  return events.reduce(foldEvent, EMPTY_STATE);
+/** Folds events that are already sorted by `(ts, _id)`, starting from `from`. */
+export function foldAll(events: FoldableEvent[], from: PatientState = EMPTY_STATE): PatientState {
+  return events.reduce(foldEvent, from);
 }
