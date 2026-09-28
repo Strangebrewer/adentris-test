@@ -34,10 +34,24 @@ export interface RawEvent {
    * Recomputing a patient's state reuses it instead of calling again.
    */
   processingResult: ProcessingResult | null;
+  /**
+   * How many attempts at this event have failed: an error, or a claim whose lease ran out before
+   * the worker handed it back. Waiting on an earlier event doesn't count.
+   */
+  attempts: number;
+  /** Why the last failed attempt failed. */
+  lastError: string | null;
 }
 
 /** An event as returned by a claim, which always carries the claiming worker's token. */
 export type ClaimedEvent = RawEvent & { claimToken: string };
+
+/**
+ * What a claim found: an event to work on, or an event whose lease had run out once too often,
+ * which the claim marked `failed` instead of handing out again.
+ */
+export type ClaimResult =
+  { kind: 'claimed'; event: ClaimedEvent } | { kind: 'failed'; event: RawEvent };
 
 /** A claimed event whose external call has finished and whose result is cached. */
 export type ProcessedEvent = ClaimedEvent & { processingResult: ProcessingResult };

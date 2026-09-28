@@ -12,6 +12,8 @@ export function rawEvent(overrides: Partial<RawEvent> & Pick<RawEvent, '_id'>): 
     claimableAt: new Date(),
     claimToken: null,
     processingResult: null,
+    attempts: 0,
+    lastError: null,
     ...overrides,
   };
 }

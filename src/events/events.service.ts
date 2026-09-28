@@ -18,6 +18,8 @@ export interface EventStatusView {
   status: RawEventStatus;
   /** The external call's result, once the event has been processed. */
   result: ProcessingResult | null;
+  attempts: number;
+  lastError: string | null;
 }
 
 @Injectable()
@@ -48,6 +50,8 @@ export class EventsService {
       claimableAt: now,
       claimToken: null,
       processingResult: null,
+      attempts: 0,
+      lastError: null,
     });
     return { id };
   }
@@ -56,8 +60,19 @@ export class EventsService {
     const event = await this.rawEvents.findById(id);
     if (!event) throw new NotFoundException(`No event with id ${id}`);
 
-    const { _id, patientId, type, ts, receivedAt, status, processingResult } = event;
-    return { id: _id, patientId, type, ts, receivedAt, status, result: processingResult };
+    const { _id, patientId, type, ts, receivedAt, status, processingResult, attempts, lastError } =
+      event;
+    return {
+      id: _id,
+      patientId,
+      type,
+      ts,
+      receivedAt,
+      status,
+      result: processingResult,
+      attempts,
+      lastError,
+    };
   }
 
   private parseTs(raw: string): Date {

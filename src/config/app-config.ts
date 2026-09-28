@@ -14,6 +14,8 @@ export interface AppConfig {
     leaseMs: number;
     idlePollMs: number;
     blockedRetryDelayMs: number;
+    maxAttempts: number;
+    retryBackoffBaseMs: number;
   };
   processing: {
     simulatedCallMs: number;
@@ -62,6 +64,8 @@ export function loadConfig(env: Env): AppConfig {
       leaseMs: int('QUEUE_LEASE_MS', 15_000, 1),
       idlePollMs: int('QUEUE_IDLE_POLL_MS', 500, 1),
       blockedRetryDelayMs: int('QUEUE_BLOCKED_RETRY_DELAY_MS', 250, 1),
+      maxAttempts: int('QUEUE_MAX_ATTEMPTS', 5, 1),
+      retryBackoffBaseMs: int('QUEUE_RETRY_BACKOFF_BASE_MS', 1_000, 1),
     },
     processing: {
       simulatedCallMs: int('PROCESSING_SIMULATED_CALL_MS', 5_000, 0),

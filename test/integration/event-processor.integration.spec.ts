@@ -11,16 +11,11 @@ import {
   PATIENT_PROJECTIONS_COLLECTION,
   PatientProjection,
 } from '../../src/projections/patient-projection.model';
-import {
-  ClaimedEvent,
-  RAW_EVENTS_COLLECTION,
-  RawEvent,
-} from '../../src/raw-events/raw-event.model';
+import { RAW_EVENTS_COLLECTION, RawEvent } from '../../src/raw-events/raw-event.model';
 import { RawEventRepository } from '../../src/raw-events/raw-event.repository';
+import { claimOne } from '../support/claim';
 import { rawEvent } from '../support/raw-event';
 import { clearCollections, testConfig } from '../support/test-db';
-
-const LEASE_MS = 15_000;
 
 async function setUp(config: Record<string, string>) {
   const moduleRef = await Test.createTestingModule({
@@ -58,7 +53,7 @@ describe('EventProcessor when a claim is taken over', () => {
     await ctx?.moduleRef.close();
   });
 
-  const claim = async (): Promise<ClaimedEvent> => (await ctx.repository.claimNext(LEASE_MS))!;
+  const claim = () => claimOne(ctx.repository);
 
   /** Pretends e1's lease ran out while its worker was stalled, so another worker can claim it. */
   async function expireLease(): Promise<void> {
@@ -113,17 +108,16 @@ describe('EventProcessor when the external call is too slow', () => {
     await ctx?.moduleRef.close();
   });
 
-  it('abandons the call at the timeout and stores nothing', async () => {
+  it('abandons the call at the timeout and counts it as a failed attempt', async () => {
     await ctx.rawEvents.insertOne(rawEvent({ _id: 'e1' }));
-    const claimed = await ctx.repository.claimNext(LEASE_MS);
+    const claimed = await claimOne(ctx.repository);
 
-    await expect(ctx.processor.process(claimed!)).rejects.toThrow(
-      'External call timed out after 50ms',
-    );
+    expect(await ctx.processor.process(claimed)).toBe('retrying');
 
-    // Left as it was, for the lease to run out and the event to be claimed again.
     expect(await ctx.rawEvents.findOne({ _id: 'e1' })).toMatchObject({
-      status: 'processing',
+      status: 'pending',
+      attempts: 1,
+      lastError: 'External call timed out after 50ms',
       processingResult: null,
     });
     expect(await ctx.projections.countDocuments()).toBe(0);

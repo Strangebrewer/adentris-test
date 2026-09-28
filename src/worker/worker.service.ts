@@ -8,7 +8,7 @@ import {
 import { setTimeout } from 'node:timers/promises';
 import { APP_CONFIG, AppConfig } from '../config/app-config';
 import { EventProcessor } from '../processing/event-processor';
-import { ClaimedEvent } from '../raw-events/raw-event.model';
+import { ClaimedEvent, ClaimResult } from '../raw-events/raw-event.model';
 import { RawEventRepository } from '../raw-events/raw-event.repository';
 
 /**
@@ -42,7 +42,7 @@ export class WorkerService implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   private async run(): Promise<void> {
-    const { concurrency, leaseMs, idlePollMs } = this.config.queue;
+    const { concurrency, leaseMs, idlePollMs, maxAttempts } = this.config.queue;
 
     while (this.running) {
       if (this.inFlight.size >= concurrency) {
@@ -50,19 +50,24 @@ export class WorkerService implements OnApplicationBootstrap, OnModuleDestroy {
         continue;
       }
 
-      let event: ClaimedEvent | null;
+      let claim: ClaimResult | null;
       try {
-        event = await this.rawEvents.claimNext(leaseMs);
+        claim = await this.rawEvents.claimNext(leaseMs, maxAttempts);
       } catch (err) {
         this.logger.error('Failed to claim an event', errorText(err));
-        event = null;
+        claim = null;
       }
-      if (!event) {
+      if (!claim) {
         await setTimeout(idlePollMs);
         continue;
       }
+      if (claim.kind === 'failed') {
+        const { _id, attempts, lastError } = claim.event;
+        this.logger.error(`Event ${_id} failed after ${attempts} attempts: ${lastError}`);
+        continue;
+      }
 
-      const task = this.handle(event).finally(() => this.inFlight.delete(task));
+      const task = this.handle(claim.event).finally(() => this.inFlight.delete(task));
       this.inFlight.add(task);
     }
   }
@@ -75,7 +80,8 @@ export class WorkerService implements OnApplicationBootstrap, OnModuleDestroy {
         this.logger.warn(`Another worker took over event ${event._id}, so this worker stopped`);
       }
     } catch (err) {
-      // The event keeps its claim until the lease runs out, and is then claimed again.
+      // Even recording the failure failed. The event keeps its claim until the lease runs out,
+      // and the next claim counts the attempt.
       this.logger.error(`Failed to process event ${event._id}`, errorText(err));
     }
   }

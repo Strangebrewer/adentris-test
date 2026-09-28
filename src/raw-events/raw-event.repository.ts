@@ -4,6 +4,7 @@ import { Collection, Db, MongoServerError } from 'mongodb';
 import { DUPLICATE_KEY, MONGO_DB } from '../mongo/mongo.module';
 import {
   ClaimedEvent,
+  ClaimResult,
   ProcessedEvent,
   ProcessingResult,
   RAW_EVENTS_COLLECTION,
@@ -11,6 +12,8 @@ import {
 } from './raw-event.model';
 
 type Claim = Pick<ClaimedEvent, '_id' | 'claimToken'>;
+
+const FAILED_BY_PATIENT_INDEX = 'failed_by_patient';
 
 @Injectable()
 export class RawEventRepository implements OnModuleInit {
@@ -25,6 +28,11 @@ export class RawEventRepository implements OnModuleInit {
     await this.collection.createIndex({ claimableAt: 1 });
     // Serves the per-patient queries at commit time, which filter and sort by `(ts, _id)`.
     await this.collection.createIndex({ patientId: 1, ts: 1, _id: 1 });
+    // Only failed events are in this one, so it stays tiny however large the log grows.
+    await this.collection.createIndex(
+      { patientId: 1, ts: 1 },
+      { name: FAILED_BY_PATIENT_INDEX, partialFilterExpression: { status: 'failed' } },
+    );
   }
 
   /**
@@ -47,21 +55,43 @@ export class RawEventRepository implements OnModuleInit {
    * Claims the claimable event that has waited longest, or returns null if there is none.
    * The claim is a single atomic update, so two workers can never claim the same event at once.
    * The claim lasts `leaseMs`. If the worker dies, the event becomes claimable again after that.
+   *
+   * Every clean hand-back clears the token, so a token still on the event means the previous
+   * claim's lease ran out: the worker crashed or took too long. That counts as a failed attempt,
+   * and at `maxAttempts` the event is marked `failed` instead of being handed out again.
+   * Otherwise an event that crashes every worker that picks it up would be retried forever.
    */
-  async claimNext(leaseMs: number): Promise<ClaimedEvent | null> {
+  async claimNext(leaseMs: number, maxAttempts: number): Promise<ClaimResult | null> {
     const now = new Date();
-    const claimed = await this.collection.findOneAndUpdate(
+    const leaseRanOut = { $ne: ['$claimToken', null] };
+    const exhausted = { $gte: ['$attempts', maxAttempts] };
+
+    const event = await this.collection.findOneAndUpdate(
       { claimableAt: { $lte: now } },
-      {
-        $set: {
-          status: 'processing',
-          claimableAt: new Date(now.getTime() + leaseMs),
-          claimToken: randomUUID(),
+      [
+        { $set: { attempts: { $add: ['$attempts', { $cond: [leaseRanOut, 1, 0] }] } } },
+        {
+          $set: {
+            status: { $cond: [exhausted, 'failed', 'processing'] },
+            claimableAt: { $cond: [exhausted, null, new Date(now.getTime() + leaseMs)] },
+            claimToken: { $cond: [exhausted, null, randomUUID()] },
+            lastError: {
+              $cond: [
+                leaseRanOut,
+                'The lease ran out before the worker finished: it crashed or took too long',
+                '$lastError',
+              ],
+            },
+          },
         },
-      },
+      ],
       { sort: { claimableAt: 1 }, returnDocument: 'after' },
     );
-    return claimed as ClaimedEvent | null;
+
+    if (!event) return null;
+    return event.status === 'failed'
+      ? { kind: 'failed', event }
+      : { kind: 'claimed', event: event as ClaimedEvent };
   }
 
   /** Caches the external call's result. Returns false if the claim was taken over. */
@@ -87,7 +117,46 @@ export class RawEventRepository implements OnModuleInit {
   }
 
   /**
-   * Whether the patient has an earlier event that isn't `done` yet.
+   * Records a failed attempt and hands the event back, to be retried from `retryAt`.
+   * Returns false if the claim was taken over.
+   */
+  retryLater(claim: Claim, attempts: number, error: string, retryAt: Date): Promise<boolean> {
+    return this.updateIfStillClaimed(claim, {
+      status: 'pending',
+      claimableAt: retryAt,
+      claimToken: null,
+      attempts,
+      lastError: error,
+    });
+  }
+
+  /**
+   * Records the last allowed attempt as failed. The event is never claimed again, and it keeps
+   * blocking the patient's later events. Returns false if the claim was taken over.
+   */
+  markFailed(claim: Claim, attempts: number, error: string): Promise<boolean> {
+    return this.updateIfStillClaimed(claim, {
+      status: 'failed',
+      claimableAt: null,
+      claimToken: null,
+      attempts,
+      lastError: error,
+    });
+  }
+
+  /** The patient's earliest `failed` event, which everything after it is waiting on. */
+  findFirstFailed(patientId: string): Promise<Pick<RawEvent, '_id' | 'ts'> | null> {
+    return this.collection
+      .find({ patientId, status: 'failed' }, { projection: { _id: 1, ts: 1 } })
+      .hint(FAILED_BY_PATIENT_INDEX)
+      .sort({ ts: 1, _id: 1 })
+      .limit(1)
+      .next();
+  }
+
+  /**
+   * Whether the patient has an earlier event that isn't `done` yet. That includes `failed`
+   * events, so a failed event holds up everything after it.
    * Earlier means by `(ts, _id)`, the order events are folded in.
    */
   async hasUnfinishedBefore({ _id, patientId, ts }: RawEvent): Promise<boolean> {
@@ -105,7 +174,8 @@ export class RawEventRepository implements OnModuleInit {
   /**
    * The patient's events after `after` (or from the start, if it's null) up to and including
    * `upTo` that have a cached result, in the order they're folded in.
-   * That includes events that aren't `done` yet.
+   * That includes events that aren't `done` yet, but not `failed` ones: a failed event can
+   * have a result if its call succeeded and its commit didn't.
    */
   findProcessedBetween(
     patientId: string,
@@ -115,7 +185,7 @@ export class RawEventRepository implements OnModuleInit {
     const ts = after ? { $gt: after, $lte: upTo } : { $lte: upTo };
     return this.collection
       .find(
-        { patientId, ts, processingResult: { $ne: null } },
+        { patientId, ts, processingResult: { $ne: null }, status: { $ne: 'failed' } },
         { projection: { _id: 1, processingResult: 1 } },
       )
       .sort({ ts: 1, _id: 1 })

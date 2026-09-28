@@ -10,6 +10,7 @@ import { rawEvent } from '../support/raw-event';
 import { clearCollections, testConfig } from '../support/test-db';
 
 const LEASE_MS = 15_000;
+const MAX_ATTEMPTS = 5;
 
 describe('RawEventRepository.claimNext', () => {
   let moduleRef: TestingModule;
@@ -39,6 +40,14 @@ describe('RawEventRepository.claimNext', () => {
     await moduleRef?.close();
   });
 
+  const claimNext = () => repository.claimNext(LEASE_MS, MAX_ATTEMPTS);
+
+  /** Pretends e1's lease ran out, as if the worker holding it had died. */
+  async function expireLease(): Promise<void> {
+    const past = new Date(Date.now() - 1);
+    await rawEvents.updateOne({ _id: 'e1' }, { $set: { claimableAt: past } });
+  }
+
   it('gives each claimable event to exactly one of many concurrent claimers', async () => {
     const claimable = Array.from({ length: 20 }, (_, i) => rawEvent({ _id: `claimable-${i}` }));
     await rawEvents.insertMany([
@@ -47,26 +56,45 @@ describe('RawEventRepository.claimNext', () => {
       rawEvent({ _id: 'not-yet', claimableAt: new Date(Date.now() + 60_000) }),
     ]);
 
-    const claims = await Promise.all(
-      Array.from({ length: 30 }, () => repository.claimNext(LEASE_MS)),
-    );
+    const claims = await Promise.all(Array.from({ length: 30 }, claimNext));
 
-    const claimedIds = claims.filter((claim) => claim !== null).map((claim) => claim._id);
+    const claimedIds = claims.filter((claim) => claim !== null).map((claim) => claim.event._id);
     expect(claimedIds.sort()).toEqual(claimable.map((event) => event._id).sort());
   });
 
   it('does not give a claimed event out again until its lease runs out', async () => {
     await rawEvents.insertOne(rawEvent({ _id: 'e1' }));
 
-    const first = await repository.claimNext(LEASE_MS);
-    expect(first?._id).toBe('e1');
-    expect(await repository.claimNext(LEASE_MS)).toBeNull();
+    const first = await claimNext();
+    expect(first?.event._id).toBe('e1');
+    expect(await claimNext()).toBeNull();
 
-    // Pretend the lease ran out, as if the worker holding it had died.
-    await rawEvents.updateOne({ _id: 'e1' }, { $set: { claimableAt: new Date(Date.now() - 1) } });
-    const second = await repository.claimNext(LEASE_MS);
+    await expireLease();
+    const second = await claimNext();
 
-    expect(second?._id).toBe('e1');
-    expect(second?.claimToken).not.toBe(first?.claimToken);
+    expect(second?.event._id).toBe('e1');
+    expect(second?.event.claimToken).not.toBe(first?.event.claimToken);
+  });
+
+  it('counts a lease that ran out as a failed attempt', async () => {
+    await rawEvents.insertOne(rawEvent({ _id: 'e1' }));
+
+    expect((await claimNext())?.event.attempts).toBe(0);
+    await expireLease();
+
+    expect(await claimNext()).toMatchObject({ kind: 'claimed', event: { attempts: 1 } });
+  });
+
+  // An event that crashes every worker that picks it up would otherwise be retried forever.
+  it('marks an event failed instead of handing it out when its lease has run out too often', async () => {
+    await rawEvents.insertOne(rawEvent({ _id: 'e1', attempts: MAX_ATTEMPTS - 1 }));
+    await claimNext();
+    await expireLease();
+
+    expect(await claimNext()).toMatchObject({
+      kind: 'failed',
+      event: { status: 'failed', attempts: MAX_ATTEMPTS, claimableAt: null, claimToken: null },
+    });
+    expect(await claimNext()).toBeNull();
   });
 });
