@@ -12,6 +12,7 @@
     "typecheck": "tsc",
     "start:api": "node --env-file-if-exists=.env --enable-source-maps dist/main.js",
     "start:worker": "node --env-file-if-exists=.env --enable-source-maps dist/worker.main.js",
+    "demo": "node --env-file-if-exists=.env --enable-source-maps dist/demo.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "format": "prettier --write \"{src,test}/**/*.ts\"",
     "test": "jest",
